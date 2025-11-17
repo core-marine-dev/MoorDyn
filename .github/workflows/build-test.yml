@@ -71,7 +71,7 @@ jobs:
     needs: [create_release]
     strategy:
         matrix:
-            os: [ubuntu-22.04, windows-latest]
+            os: [ubuntu-22.04, windows-latest, macOS-latest-large]
 
     steps:
     - uses: actions/checkout@v5
