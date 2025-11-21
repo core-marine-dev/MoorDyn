@@ -259,6 +259,9 @@ class DECLDIR Line final
 	std::vector<moordyn::real> ldstr;
 	/// curvatures at node points (1/m)
 	std::vector<moordyn::real> Kurv;
+	/// Flag to know if the line segments are part of the state, or shall be
+	/// computed by ::getStateDeriv()
+	bool _l_from_state;
 
 	/// node mass + added mass matrix
 	std::vector<mat> M;
@@ -424,7 +427,7 @@ class DECLDIR Line final
 	 * the other objects initialize functions.
 	 * @throws moordyn::output_file_error If an outfile has been provided, but
 	 * it cannot be written
-	 * @throws invalid_value_error If there is no enough water depth
+	 * @throws moordyn::invalid_value_error If there is no enough water depth
 	 */
 	void initialize();
 
@@ -433,59 +436,8 @@ class DECLDIR Line final
 	 * state structure0)
 	 * @note This calls Line::Initialize()
 	 */
-	inline void initialize(InstanceStateVarView state)
-	{
-		// ------ Initialize the line ------
-		initialize();
 
-		// ------ Assign the intialized values to the state (bascially
-		// Line::setState but flipped) ------ Error check for number of columns
-		// (if VIV and Visco need row.size() = 8, if VIV xor Visco need
-		// row.size() = 7, if not VIV need row.size() = 6)
-		if ((state.row(0).size() != 8 && Cl > 0 && ElasticMod != ELASTIC_CONSTANT) ||
-		    (state.row(0).size() != 7 && ((Cl > 0) ^ (ElasticMod != ELASTIC_CONSTANT))) ||
-		    (state.row(0).size() != 6 && Cl == 0 && ElasticMod == ELASTIC_CONSTANT)) {
-			LOGERR << "Invalid state.row size for Line " << number << endl;
-			throw moordyn::mem_error("Invalid state.row size");
-		}
-
-		// Error check for number of rows (if visco need N rows, if normal need
-		// N-1 rows)
-		if ((state.rows() != N && ElasticMod != ELASTIC_CONSTANT) ||
-		    (state.rows() != N - 1 && ElasticMod == ELASTIC_CONSTANT)) {
-			LOGERR << "Invalid number of rows in state matrix for Line "
-			       << number << endl;
-			throw moordyn::mem_error("Invalid number of rows in state matrix");
-		}
-
-		// If using the viscoelastic model, iterate N rows, else iterate N-1
-		// rows.
-		for (unsigned int i = 0; i < (ElasticMod != ELASTIC_CONSTANT ? N : N - 1); i++) {
-			// node number is i+1
-			// segment number is i
-			state.row(i).head<3>() = r[i + 1];
-			state.row(i).segment<3>(3) = rd[i + 1];
-
-			if (ElasticMod != ELASTIC_CONSTANT)
-				state.row(i).tail<1>()[0] =
-				    dl_1[i]; // [0] needed becasue tail<1> returns a one element
-				             // vector. Viscoelastic state is always the last
-				             // element in the row
-
-			if (Cl > 0) {
-				if (ElasticMod != ELASTIC_CONSTANT)
-					state.row(i).tail<2>()[0] =
-					    phi[i + 1]; // if both VIV and viscoelastic second to
-					                // last element in the row
-				else
-					state.row(i).tail<1>()[0] =
-					    phi[i + 1]; // else last element in the row
-			}
-		}
-	}
-	/**
-	 * @}
-	 */
+	void initialize(InstanceStateVarView state);
 
 	/** @brief Number of segments
 	 *
@@ -544,6 +496,36 @@ class DECLDIR Line final
 		}
 		setUnstretchedLength(UnstrLen0 + dt * UnstrLend);
 	}
+
+	/** @brief Let the line know if the segment lengths are a state variable
+	 * @param is_l_a_state Whether the length is a state variable
+	 * @see moordyn::time::ImpScheme
+	 */
+	inline void isSegmentLengthState(const bool is_l_a_state)
+	{
+		_l_from_state = is_l_a_state;
+	}
+
+	/** @brief Return whether the segment lengths are a state variable or not
+	 * @return true if the segment lengths are a state variable, false
+	 * otherwise
+	 * @see moordyn::time::ImpScheme
+	 */
+	inline bool isSegmentLengthState() const { return _l_from_state; }
+
+	/** @brief Compute the segment lengths and store them on a state variable
+	 * @param state The state where the segment lengths shall be saved
+	 * @throws moordyn::invalid_value_error If ::_l_from_state is false
+	 * @see moordyn::time::ImpScheme
+	 */
+	void getSegmentsLength(InstanceStateVarView state) const;
+
+	/** @brief Copy the segment lengths from a state variable
+	 * @param state The state where the segment lengths are stored
+	 * @throws moordyn::invalid_value_error If ::_l_from_state is false
+	 * @see moordyn::time::ImpScheme
+	 */
+	void setSegmentsLength(InstanceStateVarView state);
 
 	/** @brief Get whether the line is governed by a non-linear stiffness or a
 	 * constant one
@@ -1039,14 +1021,14 @@ class DECLDIR Line final
 	 */
 	inline const size_t stateDims() const
 	{
-		if (Cl > 0 && ElasticMod != ELASTIC_CONSTANT)
-			return 8; // 3 for position, 3 for velocity, 1 for VIV phase, 1 for
-			          // viscoelasticity
-		else if ((Cl > 0) ^ (ElasticMod != ELASTIC_CONSTANT))
-			return 7; // 3 for position, 3 for velocity, 1 for VIV phase or
-			          // viscoelasticity
-		else
-			return 6;
+		size_t dims = 6;  // Position and velocity
+		if (_l_from_state)
+			dims++;
+		if (ElasticMod != ELASTIC_CONSTANT)
+			dims++;
+		if (Cl > 0)
+			dims++;
+		return dims;
 	}
 
 	/** @brief Produce the packed data to be saved

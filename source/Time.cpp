@@ -847,6 +847,55 @@ ImplicitWilsonScheme::MakeWilson(const real& tau, const real& dt)
 	}
 }
 
+ImpScheme::ImpScheme(moordyn::Log* log,
+                     moordyn::WavesRef waves,
+                     unsigned int iters)
+  : ImplicitSchemeBase(log, waves, iters)
+{
+	stringstream s;
+	s << "IMP (" << iters << " iterations)";
+	name = s.str();
+}
+
+void
+ImpScheme::Step(real& dt)
+{
+	auto r0 = r(0)->get();      // State at the inpoint
+	auto r1 = r(1)->get();      // State at the outpoint
+	auto r_mid = r(2)->get();   // State at the midpoint
+	auto drdt0 = rd(0)->get();  // Previous computed derivative
+	auto drdt1 = rd(1)->get();  // Current state derivative
+
+	t += 0.5 * dt;
+	drdt1 = drdt0;
+	for (unsigned int i = 0; i < iters(); i++) {
+		r1 = r0 + dt * drdt0;
+		// NOTE: This can be done on a more performant way
+		// We are setting the state of the lines, so we can retrieve the
+		// segment lengths at the outpoint
+		Update(0.5 * dt, 1);
+		SegmentLengths(1);
+		// Now we can average on the middle
+		r_mid = 0.5 * (r0 + r1);
+		Update(0.5 * dt, 2);
+		CalcStateDeriv(0);
+
+		if (i < iters() - 1) {
+			// We cannot relax on the last step
+			const real relax = Relax(i);
+			drdt0 = (1.0 - relax) * drdt0 + relax * drdt1;
+			drdt1 = drdt0;
+		}
+	}
+
+	// Apply
+	r0 += dt * drdt0;
+	t += 0.5 * dt;
+	Update(dt, 0);
+	SegmentLengths(0);
+	ImplicitSchemeBase::Step(dt);
+}
+
 Scheme*
 create_time_scheme(const std::string& name,
                    moordyn::Log* log,
@@ -910,6 +959,15 @@ create_time_scheme(const std::string& name,
 		} catch (std::invalid_argument) {
 			stringstream s;
 			s << "Invalid Wilson name format '" << name << "'";
+			throw moordyn::invalid_value_error(s.str().c_str());
+		}
+	} else if (str::startswith(str::lower(name), "imp")) {
+		try {
+			unsigned int iters = std::stoi(name.substr(8));
+			out = new ImpScheme(log, waves, iters);
+		} catch (std::invalid_argument) {
+			stringstream s;
+			s << "Invalid IMP name format '" << name << "'";
 			throw moordyn::invalid_value_error(s.str().c_str());
 		}
 	} else {

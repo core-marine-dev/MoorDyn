@@ -41,6 +41,27 @@
 constexpr int WIDTH = 20; // Width for output
 constexpr int PRECISION = 7; // Precision for output
 
+// Helper to access a position on the state variable
+#define STATE_R(VAR, ROW)                                                      \
+	VAR.row(ROW).head<3>()
+
+// Helper to access a position on the state variable
+#define STATE_V(VAR, ROW)                                                      \
+	VAR.row(ROW).segment<3>(3)
+
+// Helper to access a length on the state variable
+#define STATE_L(VAR, ROW)                                                      \
+	VAR.row(ROW).head<7>()[6]
+
+// Helper to access a VIV phi on the state variable
+#define STATE_PHI(VAR, ROW)                                                    \
+	VAR.row(ROW).segment((!_l_from_state) ? 6 : 7, 1)[0]
+
+// Helper to access a Visco-elasticity strain on the state variable
+#define STATE_DL(VAR, ROW)                                                     \
+	VAR.row(ROW).tail<1>()[0]
+
+
 using namespace std;
 
 namespace moordyn {
@@ -50,6 +71,7 @@ Line::Line(moordyn::Log* log, size_t lineId)
   : Instance(log)
   , lineId(lineId)
   , isPb(false)
+  , _l_from_state(false)
 {
 	vtk.set_binary();
 }
@@ -626,6 +648,58 @@ Line::initialize()
 	// return any state information
 }
 
+void
+Line::initialize(InstanceStateVarView state)
+{
+	// ------ Initialize the line ------
+	initialize();
+
+	// ------ Assign the intialized values to the state (bascially
+	// Line::setState but flipped) ------
+
+	// If using the viscoelastic model, iterate N rows, else iterate N-1
+	// rows.
+	for (unsigned int i = 0; i < stateN(); i++) {
+		// node number is i+1
+		// segment number is i
+		STATE_R(state, i) = r[i + 1];
+		STATE_V(state, i) = rd[i + 1];
+
+		if (ElasticMod != ELASTIC_CONSTANT)
+			STATE_DL(state, i) = dl_1[i];
+
+		if (Cl > 0)
+			STATE_PHI(state, i) = phi[i + 1];
+	}
+
+	if(isSegmentLengthState()) {
+		getSegmentsLength(state);
+		setSegmentsLength(state);
+	}
+}
+
+void
+Line::getSegmentsLength(InstanceStateVarView state) const
+{
+	if (!isSegmentLengthState())
+		throw moordyn::invalid_value_error(
+			"Segment lengths are not state variables");
+	for (unsigned int i = 0; i < N; i++) {
+		STATE_L(state, i) = (r[i] - r[i + 1]).norm();
+	}
+}
+
+void
+Line::setSegmentsLength(InstanceStateVarView state)
+{
+	if (!isSegmentLengthState())
+		throw moordyn::invalid_value_error(
+			"Segment lengths are not state variables");
+	for (unsigned int i = 0; i < N; i++) {
+		lstr[i] = STATE_L(state, i);
+	}
+}
+
 real
 Line::GetLineOutput(OutChanProps outChan)
 {
@@ -779,52 +853,26 @@ Line::setState(const InstanceStateVarView state)
 	//	- row[i] = [rix, riy, riz, rdix, rdiy, rdiz, phii, ldot_1i]
 	//  - note there will be 7 unused values in the last row
 
-	// Error check for number of columns (if VIV and Visco need row.size() = 8,
-	// if VIV xor Visco need row.size() = 7, if not VIV need row.size() = 6)
-	if ((state.row(0).size() != 8 && Cl > 0 && ElasticMod != ELASTIC_CONSTANT) ||
-	    (state.row(0).size() != 7 && ((Cl > 0) ^ (ElasticMod != ELASTIC_CONSTANT))) ||
-	    (state.row(0).size() != 6 && Cl == 0 && ElasticMod == ELASTIC_CONSTANT)) {
-		LOGERR << "Invalid state.row size for Line " << number << endl;
-		throw moordyn::mem_error("Invalid state.row size");
-	}
-
-	// Error check for number of rows (if visco need N rows, if normal need N-1
-	// rows)
-	if ((state.rows() != N && ElasticMod != ELASTIC_CONSTANT) ||
-	    (state.rows() != N - 1 && ElasticMod == ELASTIC_CONSTANT)) {
-		LOGERR << "Invalid number of rows in state matrix for Line " << number
-		       << endl;
-		throw moordyn::mem_error("Invalid number of rows in state matrix");
-	}
-
 	// If using the viscoelastic model, interate N rows, else iterate N-1 rows.
-	for (unsigned int i = 0; i < (ElasticMod != ELASTIC_CONSTANT ? N : N - 1); i++) {
+	for (unsigned int i = 0; i < stateN(); i++) {
 		// node number is i+1
 		// segment number is i
 		if (i < N - 1) { // only assign the internal nodes
-			r[i + 1] = state.row(i).head<3>();
-			rd[i + 1] = state.row(i).segment<3>(3);
+			r[i + 1] = STATE_R(state, i);
+			rd[i + 1] = STATE_V(state, i);
 		}
 
+		if (isSegmentLengthState())
+			lstr[i] = STATE_L(state, i);
+
 		if (ElasticMod != ELASTIC_CONSTANT)
-			dl_1[i] =
-			    state.row(i)
-			        .tail<1>()[0]; // [0] needed becasue tail<1> returns a one
-			                       // element vector. Viscoelastic state is
-			                       // always the last element in the row
+			dl_1[i] = STATE_DL(state, i);
 
 		if (Cl > 0 &&
 		    !(IC_gen)) { // not needed in IC_gen. Initializes as distribution on
 			             // 0-2pi. State is initialized by init function in this
 			             // code, which sets phi to range 0-2pi
-			if (ElasticMod != ELASTIC_CONSTANT)
-				phi[i + 1] =
-				    state.row(i)
-				        .tail<2>()[0]; // if both VIV and viscoelastic second to
-				                       // last element in the row
-			else
-				phi[i + 1] =
-				    state.row(i).tail<1>()[0]; // else last element in the row
+			phi[i + 1] = STATE_PHI(state, i);
 		}
 	}
 }
@@ -991,10 +1039,13 @@ Line::getStateDeriv(InstanceStateVarView drdt)
 		// vectors (qs) for each segment (this is used for bending and stiffness
 		// calculations)
 
-		lstr[i] = unitvector(
-		    qs[i], r[i], r[i + 1]); // if using the viscoelastic model this is
-		                            // redundant for the first time step, as it
-		                            // is also called by Line::initalize
+		// if using the viscoelastic model this is redundant for the first
+		// time step, as it is also called by Line::initalize
+		// If using the IMP time integrator, the length of the segments is not
+		// determined by the positions of the nodes
+		const auto lstr_i = unitvector(qs[i], r[i], r[i + 1]);
+		if(!isSegmentLengthState())
+			lstr[i] = lstr_i;
 
 		ldstr[i] = qs[i].dot(rd[i + 1] - rd[i]); // strain rate of segment
 

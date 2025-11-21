@@ -1412,7 +1412,7 @@ class ImplicitNewmarkScheme final : public ImplicitSchemeBase<2, 3>
 	real _beta;
 };
 
-/** @class ImplicitNewmarkScheme Time.hpp
+/** @class ImplicitWilsonScheme Time.hpp
  * @brief Implicit Wilson Scheme
  *
  * The implicit Wilson scheme is so far similar to the Implicit Euler scheme,
@@ -1474,6 +1474,75 @@ class ImplicitWilsonScheme final : public ImplicitSchemeBase<2, 3>
 
 	/// Theta factor
 	real _theta;
+};
+
+/** @class ImpScheme Time.hpp
+ * @brief Implicit 1st order Midpoint Euler time scheme, with intrinsic energy
+ * conservation
+ *
+ * The implicit Midpoint Euler method is an implicit method, where the
+ * derivative is evaluated at the mid of the time step. Obviously, since that
+ * point depends on the derivative itself, a fixed point problem shall be
+ * solved
+ *
+ * The IMP is a little special variant of the midpoint, on which the midpoint
+ * fields are chosen on a way they grant energy conservation
+ *
+ * @warning These scheme requires additional state variables which makes it
+ * incompatible with other time integrators. Thus,
+ * moordyn::MoorDyn::ICgenDynamic shall be true
+ */
+class ImpScheme final : public ImplicitSchemeBase<3, 2>
+{
+  public:
+	/** @brief Constructor
+	 * @param log Logging handler
+	 * @param waves Waves instance
+	 * @param iters The number of inner iterations to find the derivative
+	 * @param dt_factor The inner evaluation point factor. 0.5 for the midpoint
+	 * method, 1.0 for the backward Euler method
+	 */
+	ImpScheme(moordyn::Log* log,
+	          WavesRef waves,
+	          unsigned int iters = 10);
+
+	/// @brief Destructor
+	virtual ~ImpScheme() {}
+
+	/** @brief Add a line
+	 *
+	 * The IMP scheme requires the segment lengths as a state variable, so
+	 * we are first notifying the line, and then proceeding as usual with
+	 * SchemeBase::AddLine()
+	 * @param obj The line
+	 * @throw moordyn::invalid_value_error If it has been already registered
+	 */
+	virtual void AddLine(Line* obj)
+	{
+		obj->isSegmentLengthState(true);
+		SchemeBase::AddLine(obj);
+	}
+
+	/** @brief Run a time step
+	 *
+	 * This function is the one that must be specialized on each time scheme
+	 * @param dt Time step
+	 */
+	virtual void Step(real& dt);
+
+  protected:
+	/** @brief Compute the segment lengths on a state
+	 * @param substep The index within moordyn::SchemeBase::r that will be
+	 * considered
+	 * @warning ::Update() must be called first so the lines are aware of the
+	 * state
+	 */
+	inline void SegmentLengths(unsigned int substep = 0)
+	{
+		for (unsigned int i = 0; i < lines.size(); i++) {
+			lines[i]->getSegmentsLength(AS_STATE(_r[substep])->get(lines[i]));
+		}
+	}
 };
 
 /** @brief Create a time scheme
