@@ -873,10 +873,11 @@ ImpScheme::Step(real& dt)
 		// NOTE: This can be done on a more performant way
 		// We are setting the state of the lines, so we can retrieve the
 		// segment lengths at the outpoint
-		Update(0.5 * dt, 1);
-		SegmentLengths(1);
+		Update(dt, 1);
+		SegmentData(1);
 		// Now we can average on the middle
 		r_mid = 0.5 * (r0 + r1);
+		MidK();  // The stiffness has a special expression, not just an average
 		Update(0.5 * dt, 2);
 		CalcStateDeriv(0);
 
@@ -892,7 +893,7 @@ ImpScheme::Step(real& dt)
 	r0 += dt * drdt0;
 	t += 0.5 * dt;
 	Update(dt, 0);
-	SegmentLengths(0);
+	SegmentData(0);
 	ImplicitSchemeBase::Step(dt);
 }
 

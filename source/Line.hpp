@@ -259,9 +259,8 @@ class DECLDIR Line final
 	std::vector<moordyn::real> ldstr;
 	/// curvatures at node points (1/m)
 	std::vector<moordyn::real> Kurv;
-	/// Flag to know if the line segments are part of the state, or shall be
-	/// computed by ::getStateDeriv()
-	bool _l_from_state;
+	/// Stiffness of each line segment
+	std::vector<moordyn::real> K;
 
 	/// node mass + added mass matrix
 	std::vector<mat> M;
@@ -303,6 +302,10 @@ class DECLDIR Line final
 	moordyn::real t;
 	/// MoorDyn internal time step
 	moordyn::real dtm0;
+
+	/// Flag to know if extra states are required to handle the time
+	/// integration
+	bool _imp;
 
 	// VIV stuff
 	// /// VIV amplitude updated every zero crossing of crossflow velcoity
@@ -501,9 +504,9 @@ class DECLDIR Line final
 	 * @param is_l_a_state Whether the length is a state variable
 	 * @see moordyn::time::ImpScheme
 	 */
-	inline void isSegmentLengthState(const bool is_l_a_state)
+	inline void isIMP(const bool is_imp)
 	{
-		_l_from_state = is_l_a_state;
+		_imp = is_imp;
 	}
 
 	/** @brief Return whether the segment lengths are a state variable or not
@@ -511,21 +514,52 @@ class DECLDIR Line final
 	 * otherwise
 	 * @see moordyn::time::ImpScheme
 	 */
-	inline bool isSegmentLengthState() const { return _l_from_state; }
+	inline bool isIMP() const { return _imp; }
 
-	/** @brief Compute the segment lengths and store them on a state variable
-	 * @param state The state where the segment lengths shall be saved
-	 * @throws moordyn::invalid_value_error If ::_l_from_state is false
-	 * @see moordyn::time::ImpScheme
+	/** @brief Compute the segment lengths from the current positions of the
+	 * nodes.
 	 */
-	void getSegmentsLength(InstanceStateVarView state) const;
+	void computeLength();
+
+	/** @brief Get the segment lengths and store them on a state variable
+	 * @param state The state where the segment lengths shall be saved
+	 * @throws moordyn::invalid_value_error If ::_imp is false
+	 * @see moordyn::time::ImpScheme
+	 * @note This function returns the already computed segments length. You
+	 * may want to call ::computeLength()
+	 */
+	void getLength(InstanceStateVarView state) const;
 
 	/** @brief Copy the segment lengths from a state variable
 	 * @param state The state where the segment lengths are stored
-	 * @throws moordyn::invalid_value_error If ::_l_from_state is false
+	 * @throws moordyn::invalid_value_error If ::_imp is false
 	 * @see moordyn::time::ImpScheme
 	 */
-	void setSegmentsLength(InstanceStateVarView state);
+	void setLength(InstanceStateVarView state);
+
+	/** @brief Compute the stiffness from the current lengths of the
+	 * segments.
+	 * @note The segments shall be already computed, so call ::computeLength()
+	 * before
+	 * @warning For the time being this is valid just for constant EA lines
+	 */
+	void computeStiffness();
+
+	/** @brief Get the segment stiffnesses and store them on a state variable
+	 * @param state The state where the segment stiffnesses shall be saved
+	 * @throws moordyn::invalid_value_error If ::_imp is false
+	 * @see moordyn::time::ImpScheme
+	 * @note This function returns the already computed segments length. You
+	 * may want to call ::computeStiffness()
+	 */
+	void getStiffness(InstanceStateVarView state) const;
+
+	/** @brief Copy the segment stiffnesses from a state variable
+	 * @param state The state where the segment stiffnesses are stored
+	 * @throws moordyn::invalid_value_error If ::_imp is false
+	 * @see moordyn::time::ImpScheme
+	 */
+	void setStiffness(InstanceStateVarView state);
 
 	/** @brief Get whether the line is governed by a non-linear stiffness or a
 	 * constant one
@@ -1011,19 +1045,20 @@ class DECLDIR Line final
 
 	/** @brief Get the dimension of the state variable
 	 * @return 3 components for positions and 3 components for velocities, i.e.
-	 * 6 components. An additional component is returned if the VIV model or
-	 * viscoelastic model is activated.
-	 * @note If VIV and vsicoelastic, return 8
-	 * if VIV xor viscoelastic, return 7
-	 * if normal, return 6
+	 * 6 components. Additional components are added depending on the required
+	 * features.
+	 * @note IMP requires the length and the stiffness as state variables (+2)
+	 * @note VIV requires the phi field (+1)
+	 * @note Viscoelasticity requires the stretched length due to static
+	 * tension (+1)
 	 * See comments in Line::setState to see the line state structure
 	 * @warning This function shall be called after ::setup()
 	 */
 	inline const size_t stateDims() const
 	{
 		size_t dims = 6;  // Position and velocity
-		if (_l_from_state)
-			dims++;
+		if (_imp)
+			dims += 2;
 		if (ElasticMod != ELASTIC_CONSTANT)
 			dims++;
 		if (Cl > 0)

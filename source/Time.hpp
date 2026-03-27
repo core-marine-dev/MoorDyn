@@ -1519,7 +1519,7 @@ class ImpScheme final : public ImplicitSchemeBase<3, 2>
 	 */
 	virtual void AddLine(Line* obj)
 	{
-		obj->isSegmentLengthState(true);
+		obj->isIMP(true);
 		SchemeBase::AddLine(obj);
 	}
 
@@ -1537,10 +1537,54 @@ class ImpScheme final : public ImplicitSchemeBase<3, 2>
 	 * @warning ::Update() must be called first so the lines are aware of the
 	 * state
 	 */
-	inline void SegmentLengths(unsigned int substep = 0)
+	inline void SegmentData(unsigned int substep = 0)
 	{
 		for (unsigned int i = 0; i < lines.size(); i++) {
-			lines[i]->getSegmentsLength(AS_STATE(_r[substep])->get(lines[i]));
+			lines[i]->computeLength();
+			lines[i]->getLength(AS_STATE(_r[substep])->get(lines[i]));
+			lines[i]->computeStiffness();
+			lines[i]->getStiffness(AS_STATE(_r[substep])->get(lines[i]));
+		}
+	}
+
+	/** @brief Produce the midpoint stiffness from the values at the borders
+	 * @param org The index within moordyn::SchemeBase::r that will be
+	 * considered as the initial state
+	 * @param dst The index within moordyn::SchemeBase::r that will be
+	 * considered as the final state
+	 * @param mid The index within moordyn::SchemeBase::r that will be
+	 * considered as the midpoint
+	 * @warning ::Update() must be called first so the lines are aware of the
+	 * state
+	 */
+	inline void MidK(unsigned int org = 0,
+	                 unsigned int dst = 1,
+	                 unsigned int mid = 2)
+	{
+		for (unsigned int i = 0; i < lines.size(); i++) {
+			constexpr unsigned int lcol = 6;
+			constexpr unsigned int kcol = 7;
+
+			const auto l0 = lines[i]->getUnstretchedLength();
+			const Eigen::Vector<real, Eigen::Dynamic> l2_in = (AS_STATE(
+				_r[org])->get(lines[i]).col(lcol).array() - l0).pow(2);
+			const Eigen::Vector<real, Eigen::Dynamic> l2_out = (AS_STATE(
+				_r[dst])->get(lines[i]).col(lcol).array() - l0).pow(2);
+			const Eigen::Vector<real, Eigen::Dynamic> k_in = AS_STATE(
+				_r[org])->get(lines[i]).col(kcol);
+			const Eigen::Vector<real, Eigen::Dynamic> k_out = AS_STATE(
+				_r[dst])->get(lines[i]).col(kcol);
+			const Eigen::Vector<real, Eigen::Dynamic> e_in =
+				k_in * l2_in;
+			const Eigen::Vector<real, Eigen::Dynamic> e_out =
+				k_out * l2_out;
+			const Eigen::Vector<real, Eigen::Dynamic> den =
+				l2_out - l2_in;
+			constexpr real min_den = std::numeric_limits<real>::epsilon();
+			AS_STATE(_r[mid])->get(lines[i]).col(kcol) = 
+				(den.array().abs() < min_den).select(
+					0.5 * (k_in + k_out),
+					(e_out - e_in).array() / den.array());
 		}
 	}
 };

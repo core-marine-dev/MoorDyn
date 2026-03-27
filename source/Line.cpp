@@ -53,9 +53,13 @@ constexpr int PRECISION = 7; // Precision for output
 #define STATE_L(VAR, ROW)                                                      \
 	VAR.row(ROW).head<7>()[6]
 
+// Helper to access the stiffness on the state variable
+#define STATE_K(VAR, ROW)                                                      \
+	VAR.row(ROW).head<8>()[7]
+
 // Helper to access a VIV phi on the state variable
 #define STATE_PHI(VAR, ROW)                                                    \
-	VAR.row(ROW).segment((!_l_from_state) ? 6 : 7, 1)[0]
+	VAR.row(ROW).segment((!_imp) ? 6 : 8, 1)[0]
 
 // Helper to access a Visco-elasticity strain on the state variable
 #define STATE_DL(VAR, ROW)                                                     \
@@ -71,7 +75,7 @@ Line::Line(moordyn::Log* log, size_t lineId)
   : Instance(log)
   , lineId(lineId)
   , isPb(false)
-  , _l_from_state(false)
+  , _imp(false)
 {
 	vtk.set_binary();
 }
@@ -232,6 +236,7 @@ Line::setup(int number_in,
 	lstr.assign(N, 0.0);             // stretched lengths
 	ldstr.assign(N, 0.0);            // rate of stretch
 	Kurv.assign(N + 1, 0.0);         // curvatures at node points (1/m)
+	K.assign(N, 0.0);                // Stiffness of each segment (N/m)
 
 	M.assign(N + 1, mat::Zero()); // mass matrices (3x3) for each node
 	V.assign(N, 0.0);             // segment volume?
@@ -672,31 +677,78 @@ Line::initialize(InstanceStateVarView state)
 			STATE_PHI(state, i) = phi[i + 1];
 	}
 
-	if(isSegmentLengthState()) {
-		getSegmentsLength(state);
-		setSegmentsLength(state);
+	if(isIMP()) {
+		getLength(state);
+		setLength(state);
+		getStiffness(state);
+		setStiffness(state);
 	}
 }
 
 void
-Line::getSegmentsLength(InstanceStateVarView state) const
+Line::computeLength()
 {
-	if (!isSegmentLengthState())
+	for (unsigned int i = 0; i < N; i++) {
+		lstr[i] = (r[i] - r[i + 1]).norm();
+	}
+}
+
+void
+Line::getLength(InstanceStateVarView state) const
+{
+	if (!isIMP())
 		throw moordyn::invalid_value_error(
 			"Segment lengths are not state variables");
 	for (unsigned int i = 0; i < N; i++) {
-		STATE_L(state, i) = (r[i] - r[i + 1]).norm();
+		STATE_L(state, i) = lstr[i];
 	}
 }
 
 void
-Line::setSegmentsLength(InstanceStateVarView state)
+Line::setLength(InstanceStateVarView state)
 {
-	if (!isSegmentLengthState())
+	if (!isIMP())
 		throw moordyn::invalid_value_error(
 			"Segment lengths are not state variables");
 	for (unsigned int i = 0; i < N; i++) {
 		lstr[i] = STATE_L(state, i);
+	}
+}
+
+void
+Line::computeStiffness()
+{
+	for (unsigned int i = 0; i < N; i++) {
+		if (nEApoints > 0)
+			EA = getNonlinearEA(lstr[i], l[i]);
+
+		if (lstr[i] / l[i] > 1.0) {
+			K[i] = EA / l[i];
+		} else {
+			K[i] = 0;
+		}
+	}
+}
+
+void
+Line::getStiffness(InstanceStateVarView state) const
+{
+	if (!isIMP())
+		throw moordyn::invalid_value_error(
+			"Segment stiffnesses are not state variables");
+	for (unsigned int i = 0; i < N; i++) {
+		STATE_K(state, i) = K[i];
+	}
+}
+
+void
+Line::setStiffness(InstanceStateVarView state)
+{
+	if (!isIMP())
+		throw moordyn::invalid_value_error(
+			"Segment stiffnesses are not state variables");
+	for (unsigned int i = 0; i < N; i++) {
+		K[i] = STATE_K(state, i);
 	}
 }
 
@@ -862,9 +914,6 @@ Line::setState(const InstanceStateVarView state)
 			rd[i + 1] = STATE_V(state, i);
 		}
 
-		if (isSegmentLengthState())
-			lstr[i] = STATE_L(state, i);
-
 		if (ElasticMod != ELASTIC_CONSTANT)
 			dl_1[i] = STATE_DL(state, i);
 
@@ -874,6 +923,11 @@ Line::setState(const InstanceStateVarView state)
 			             // code, which sets phi to range 0-2pi
 			phi[i + 1] = STATE_PHI(state, i);
 		}
+	}
+
+	if (isIMP()) {
+		setLength(state);
+		setStiffness(state);
 	}
 }
 
@@ -998,6 +1052,11 @@ Line::getStateDeriv(InstanceStateVarView drdt)
 	// it shall make computations in every single line node. Thus it is worthy
 	// to invest effort on keeping it optimized.
 
+	if (!isIMP()) {
+		computeLength();
+		computeStiffness();
+	}
+	
 	// attempting error handling <<<<<<<<
 	for (unsigned int i = 0; i <= N; i++) {
 		if (isnan(r[i].sum())) {
@@ -1043,9 +1102,7 @@ Line::getStateDeriv(InstanceStateVarView drdt)
 		// time step, as it is also called by Line::initalize
 		// If using the IMP time integrator, the length of the segments is not
 		// determined by the positions of the nodes
-		const auto lstr_i = unitvector(qs[i], r[i], r[i + 1]);
-		if(!isSegmentLengthState())
-			lstr[i] = lstr_i;
+		qs[i] = (r[i + 1] - r[i]) / lstr[i];
 
 		ldstr[i] = qs[i].dot(rd[i + 1] - rd[i]); // strain rate of segment
 
@@ -1054,22 +1111,12 @@ Line::getStateDeriv(InstanceStateVarView drdt)
 		// Calculate segment stiffness
 		if (ElasticMod == ELASTIC_CONSTANT) {
 			// line tension
-			if (nEApoints > 0)
-				EA = getNonlinearEA(lstr[i], l[i]);
-
-			if (lstr[i] / l[i] > 1.0) {
-				T[i] = EA * (lstr[i] - l[i]) / l[i] * qs[i];
-			} else {
-				// cable can't "push" ...
-				// or can it, if bending stiffness is nonzero? <<<<<<<<<
-				T[i] = vec::Zero();
-			}
+			T[i] = K[i] * (lstr[i] - l[i]) * qs[i];
 
 			// line internal damping force
 			if (nBApoints > 0)
 				BA = getNonlinearBA(ldstr[i], l[i]);
 			Td[i] = BA * ldstr[i] / l[i] * qs[i];
-
 		} else {
 			// viscoelastic model from
 			// https://asmedigitalcollection.asme.org/OMAE/proceedings/IOWTC2023/87578/V001T01A029/1195018
