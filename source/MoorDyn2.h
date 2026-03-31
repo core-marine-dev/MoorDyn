@@ -85,7 +85,8 @@ int DECLDIR
 MoorDyn_NCoupledDOF(MoorDyn system, unsigned int* n);
 
 /** @brief Set the instance verbosity level
- * @param system The Moordyn system
+ * @param system The Moordyn system. It can be NULL so the default value for
+ * new created systems is set
  * @param verbosity The verbosity level. It can take the following values
  *  - MOORDYN_DBG_LEVEL Every single message will be printed
  *  - MOORDYN_MSG_LEVEL Messages specially designed to help debugging the

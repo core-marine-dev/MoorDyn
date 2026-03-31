@@ -138,6 +138,9 @@ set_verbosity(PyObject*, PyObject* args)
 	if (!PyArg_ParseTuple(args, "Oi", &capsule, &verbosity))
 		return NULL;
 
+	if (capsule == Py_None)
+		return PyLong_FromLong(MoorDyn_SetVerbosity(NULL, verbosity));
+
 	MoorDyn system =
 	    (MoorDyn)PyCapsule_GetPointer(capsule, moordyn_capsule_name);
 	if (!system)

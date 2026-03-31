@@ -53,6 +53,10 @@ using namespace std;
 constexpr int WIDTH = 20; // Width for output
 constexpr int PRECISION = 7; // Precision for output
 
+/// The default verbosity level for new systems created with
+/// MOORDYN_DEFAULT_LEVEL
+static int log_default_verbosity = MOORDYN_MSG_LEVEL;
+
 /**
  * @brief A helper function for getting the size of a vector as an unsigned int
  *
@@ -110,6 +114,8 @@ moordyn::MoorDyn::MoorDyn(const char* infilename, int log_level)
   , npW(0)
 {
 	++__systems_counter;
+	if(log_level == MOORDYN_DEFAULT_LEVEL)
+		log_level = log_default_verbosity;
 	SetLogger(new Log(log_level));
 
 	if (infilename && (strlen(infilename) > 0)) {
@@ -2628,7 +2634,10 @@ MoorDyn_Create(const char* infilename)
 int DECLDIR
 MoorDyn_SetVerbosity(MoorDyn system, int verbosity)
 {
-	CHECK_SYSTEM(system);
+	if(!system) {
+		log_default_verbosity = verbosity;
+		return MOORDYN_SUCCESS;
+	}
 	((moordyn::MoorDyn*)system)->GetLogger()->SetVerbosity(verbosity);
 	return MOORDYN_SUCCESS;
 }

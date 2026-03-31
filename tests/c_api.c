@@ -101,7 +101,7 @@ main(int narg, char** arg)
 		return 255;
 	}
 	ret_code = MoorDyn_SetVerbosity(NULL, n);
-	if (ret_code != MOORDYN_INVALID_VALUE) {
+	if (ret_code != MOORDYN_SUCCESS) {
 		printf("MoorDyn_SetVerbosity() test failed...");
 		return 255;
 	}

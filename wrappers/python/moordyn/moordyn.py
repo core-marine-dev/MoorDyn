@@ -93,7 +93,9 @@ def SetVerbosity(instance, verbosity):
     """Set the verbosity level of the MoorDyn instance
 
     Parameters:
-    instance (cmoordyn.MoorDyn): The MoorDyn instance
+    instance (cmoordyn.MoorDyn): The MoorDyn instance, or None to set the
+                                 default verbosity for any system created
+                                 afterwards
     verbosity (int): The Verbosity level. One of:
                      - moordyn.LEVEL_NONE
                      - moordyn.LEVEL_ERR

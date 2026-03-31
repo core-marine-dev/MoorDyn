@@ -126,6 +126,8 @@
 #define MOORDYN_DBG_LEVEL 0
 /// Disable the output since no output will never reach this level
 #define MOORDYN_NO_OUTPUT 4096
+/// Default value, just for the constructor
+#define MOORDYN_DEFAULT_LEVEL -1
 
 /**
  * @}

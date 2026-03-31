@@ -68,7 +68,7 @@ class MoorDyn final : public io::IO
 	 * @param log_level The logging level. It can be changed afterwards
 	 */
 	DECLDIR MoorDyn(const char* infilename = NULL,
-	                int log_level = MOORDYN_MSG_LEVEL);
+	                int log_level = MOORDYN_DEFAULT_LEVEL);
 
 	/** @brief Destructor
 	 */
